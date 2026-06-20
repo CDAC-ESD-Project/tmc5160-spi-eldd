@@ -101,6 +101,7 @@ userspace interface and full project documentation.
 │   └── tmc5160.dtbo     # Device Tree overlay
 ├── stage3_userspace     # Userspace control application
 ├── docs                 # Schematics, wiring diagrams, project report
+├── refdocs              # Reference documents, datasheets
 └── README.md
 ```
 ## Current Status
