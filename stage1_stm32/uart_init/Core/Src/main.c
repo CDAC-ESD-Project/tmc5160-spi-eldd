@@ -63,11 +63,100 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
-
+void tmc5160_write_reg(uint8_t addr, uint32_t data);
+uint32_t tmc5160_read_reg(uint8_t addr);
+void print_uart(char *str);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void display(uint8_t array[])
+{ int i;
+	for(i = 0; i < 5; i++)
+	            {
+	          	  char str[10];
+	          	  sprintf(str, "0x%02X ", array[i]);
+	          	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+	            }
+
+	            HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+}
+
+void tmc5160_write_reg(uint8_t addr, uint32_t data)
+{
+    uint8_t tx[5];
+    uint8_t rx[5];
+
+    tx[0] = addr | 0x80;          // write bit = bit7 set
+    tx[1] = (data >> 24) & 0xFF;  // MSB first
+    tx[2] = (data >> 16) & 0xFF;
+    tx[3] = (data >> 8)  & 0xFF;
+    tx[4] = data & 0xFF;
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);
+    SPI_CS_DISABLE();
+}
+
+
+uint32_t tmc5160_read_reg(uint8_t addr)
+{
+    uint8_t tx[5] = {addr, 0x00, 0x00, 0x00, 0x00};
+    uint8_t rx[5];
+
+    // first transaction - throwaway (returns previous request's data)
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);
+    SPI_CS_DISABLE();
+
+    // second transaction - real data for THIS address
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);
+    SPI_CS_DISABLE();
+
+    uint32_t val = ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) |
+                   ((uint32_t)rx[3] << 8)  | rx[4];
+    return val;
+}
+
+void print_uart(char *str)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+}
+
+void tmc5160_poll_status(void)
+{
+    char buf[150];
+    uint32_t drvstatus = tmc5160_read_reg(0x6F);
+    uint32_t gstat     = tmc5160_read_reg(0x01);
+    int32_t  xactual   = (int32_t)tmc5160_read_reg(0x21);
+    uint32_t chopconf  = tmc5160_read_reg(0x6C);
+
+    sprintf(buf, "XACTUAL=%ld GSTAT=0x%08lX DRVSTATUS=0x%08lX CHOPCONF=0x%08lX\r\n",
+            (long)xactual, gstat, drvstatus, chopconf);
+    print_uart(buf);
+
+    // Decode DRV_STATUS fault bits
+    if (drvstatus & (1UL << 27)) print_uart("FAULT: OT (overtemp shutdown)\r\n");
+    if (drvstatus & (1UL << 26)) print_uart("WARN: OTPW (overtemp prewarn)\r\n");
+    if (drvstatus & (1UL << 25)) print_uart("FAULT: S2GB (short to GND phase B)\r\n");
+    if (drvstatus & (1UL << 24)) print_uart("FAULT: S2GA (short to GND phase A)\r\n");
+    if (drvstatus & (1UL << 29)) print_uart("FAULT: S2VSB (short to supply phase B)\r\n");
+    if (drvstatus & (1UL << 28)) print_uart("FAULT: S2VSA (short to supply phase A)\r\n");
+    if (drvstatus & (1UL << 23)) print_uart("WARN: OLB (open load phase B)\r\n");
+    if (drvstatus & (1UL << 22)) print_uart("WARN: OLA (open load phase A)\r\n");
+    if (drvstatus & (1UL << 31)) print_uart("INFO: standstill = 1 (motor NOT moving)\r\n");
+    else                          print_uart("INFO: standstill = 0 (motor IS moving)\r\n");
+
+    if (gstat & 0x1) print_uart("GSTAT: reset flag set\r\n");
+    if (gstat & 0x2) print_uart("GSTAT: driver error\r\n");
+    if (gstat & 0x4) print_uart("GSTAT: charge pump undervoltage\r\n");
+
+    // Decode CHOPCONF TOFF — this is the #1 reason for "no response"
+    uint8_t toff = chopconf & 0x0F;
+    sprintf(buf, "CHOPCONF TOFF=%d (must be non-zero for driver to be enabled)\r\n", toff);
+    print_uart(buf);
+}
 
 /* USER CODE END 0 */
 
@@ -103,87 +192,106 @@ int main(void)
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  SPI_CS_ENABLE();
+  SPI_CS_DISABLE();
   DRV_ENABLE();
-
+  HAL_Delay(1000);
 
   //SPI Transmit Array
   uint8_t tx_data[] = {0x01,0x00,0x00,0x00,0x00};
-  int i;
-//  for(i = 0; i < 5; i++)
-//  {
-//	  char str[10];
-//	  sprintf(str, "0x%02X ", tx_data[i]);
-//	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
-//  }
-//
-//  HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+
   //SPI Receive Array
   uint8_t rx_spi_data[5] = {0x00};
-//  for(i = 0; i < 5; i++)
-//    {
-//  	  char str[10];
-//  	  sprintf(str, "0x%02X ", rx_spi_data[i]);
-//  	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
-//    }
-//
-//    HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
 
   //SPI Message Transmit
-  HAL_SPI_Transmit(&hspi1, tx_data, sizeof(tx_data), 500);
-  for(i = 0; i < 5; i++)
-    {
-  	  char str[10];
-  	  sprintf(str, "0x%02X ", tx_data[i]);
-  	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
-    }
+  SPI_CS_ENABLE();
+  HAL_SPI_TransmitReceive(&hspi1, tx_data, rx_spi_data, 5, HAL_MAX_DELAY);
+  SPI_CS_DISABLE();
+  display(tx_data);
 
-    HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
-  //SPI Message Receive
-  HAL_SPI_Receive(&hspi1, rx_spi_data, 5, 500);
-  for(i = 0; i < 5; i++)
-      {
-    	  char str[10];
-    	  sprintf(str, "0x%02X ", rx_spi_data[i]);
-    	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
-      }
+    //SPI Message Receive
+  display(rx_spi_data);
 
-      HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
 
   //SPI Message Transmit
-  HAL_SPI_Transmit(&hspi1, tx_data, sizeof(tx_data), 500);
-  for(i = 0; i < 5; i++)
-    {
-  	  char str[10];
-  	  sprintf(str, "0x%02X ", tx_data[i]);
-  	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+  SPI_CS_ENABLE();
+  HAL_SPI_TransmitReceive(&hspi1, tx_data, rx_spi_data, 5, HAL_MAX_DELAY);
+  SPI_CS_DISABLE();
+  display(tx_data);
+  //SPI Message Receive
+  display(rx_spi_data);
+
+      uint8_t tx_drvstatus[5] = {0x6F, 0x00, 0x00, 0x00, 0x00};
+      SPI_CS_ENABLE();
+      HAL_SPI_TransmitReceive(&hspi1, tx_drvstatus, rx_spi_data, 5, HAL_MAX_DELAY);
+      SPI_CS_DISABLE();
+      display(tx_drvstatus);
+
+            HAL_Delay(1000);
+      SPI_CS_ENABLE();
+      HAL_SPI_TransmitReceive(&hspi1, tx_drvstatus, rx_spi_data, 5, HAL_MAX_DELAY); // 2nd call = real data
+      SPI_CS_DISABLE();
+      display(rx_spi_data);
+
+
+  uint8_t tx_clear_gstat[5] = {0x81, 0x00, 0x00, 0x00, 0x07}; // 0x81 = write bit + addr 0x01, data=0x07 clears bits 0-2
+  SPI_CS_ENABLE();
+  HAL_SPI_TransmitReceive(&hspi1, tx_clear_gstat, rx_spi_data, 5, HAL_MAX_DELAY);
+  SPI_CS_DISABLE();
+
+  SPI_CS_ENABLE();
+  HAL_SPI_TransmitReceive(&hspi1, tx_clear_gstat, rx_spi_data, 5, HAL_MAX_DELAY);
+  SPI_CS_DISABLE();
+  display(rx_spi_data);
+
+  SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx_clear_gstat, rx_spi_data, 5, HAL_MAX_DELAY);
+    SPI_CS_DISABLE();
+    display(rx_spi_data);
+
+
+    tmc5160_write_reg(0x00, 0x00000000);
+    // TOFF=3, HSTRT=4, HEND=1, TBL=2, MRES=0 (256 microsteps)
+    tmc5160_write_reg(0x0B, 0x000000C8); // GLOBAL_SCALER = 200 (out of 256)
+    tmc5160_write_reg(0x6C, 0x000100C3);
+    tmc5160_write_reg(0x10, 0x000A1F1A); // IHOLD=16, IRUN=20, IHOLDDELAY=10 (more current)
+    tmc5160_write_reg(0x11, 0x0000000A);
+    tmc5160_write_reg(0x20, 0x00000000); // 0 = positioning mode (uses ramp registers + XTARGET)
+    ///
+    tmc5160_write_reg(0x23, 0x00000000); // VSTART = 0
+    tmc5160_write_reg(0x24, 0x00000064); // A1   = 100
+    tmc5160_write_reg(0x25, 0x00000C80); // V1   = 3200
+    tmc5160_write_reg(0x26, 0x00000032); // AMAX = 50
+    tmc5160_write_reg(0x27, 0x00001388); // VMAX = 5000   <- much slower
+    tmc5160_write_reg(0x28, 0x00000064); // DMAX = 100
+    tmc5160_write_reg(0x2A, 0x000000C8); // D1   = 200
+    tmc5160_write_reg(0x2B, 0x0000000A); // VSTOP = 10
+    //
+    tmc5160_write_reg(0x21, 0x00000000);  // XACTUAL = 0 (define current position as zero)
+    tmc5160_write_reg(0x2D, 0x0000C800);  // XTARGET = 51200 (200 full steps * 256 microsteps)
+
+    tmc5160_write_reg(0x21, 0x00000000);  // XACTUAL = 0
+    HAL_Delay(5);
+    int32_t check = (int32_t)tmc5160_read_reg(0x21);
+    char buf[60];
+    sprintf(buf, "After XACTUAL write, readback = %ld\r\n", (long)check);
+    print_uart(buf);
+
+    tmc5160_write_reg(0x2D, 0x0000C800);  // XTARGET = 51200
+
+    for (int i = 0; i < 20; i++) {
+        int32_t xa = (int32_t)tmc5160_read_reg(0x21);
+        uint32_t rm = tmc5160_read_reg(0x20);
+        sprintf(buf, "t=%dms XACTUAL=%ld RAMPMODE=%lu\r\n", i*100, (long)xa, rm);
+        print_uart(buf);
+        HAL_Delay(100);
     }
 
-    HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
 
-  //SPI Message Receive
-  HAL_SPI_Receive(&hspi1, rx_spi_data, 5, 500);
-  for(i = 0; i < 5; i++)
-      {
-    	  char str[10];
-    	  sprintf(str, "0x%02X ", rx_spi_data[i]);
-    	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
-      }
 
-      HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
 
   //UART Data Sent
-  HAL_UART_Transmit(&huart2, (uint8_t*)"SPI1 to TMC5160 Communication..\r\n", 40, HAL_MAX_DELAY);
-  HAL_UART_Transmit(&huart2, (uint8_t*)"Data Sent\n\r", 13, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart2, (uint8_t*)"----------------------------\r\n", 30, HAL_MAX_DELAY);
 
-  //UART SPI Message Transmit
-  //HAL_UART_Transmit(&huart2, tx_data, sizeof(tx_data), HAL_MAX_DELAY);
-
-  //UART SPI Message Receive
-  //HAL_UART_Transmit(&huart2, rx_spi_data, sizeof(rx_spi_data), HAL_MAX_DELAY);
-
-
-  SPI_CS_DISABLE();
   DRV_DISABLE();
 
   /* USER CODE END 2 */
@@ -192,7 +300,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
+	  tmc5160_poll_status();
+	  HAL_Delay(200);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -269,7 +378,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
   hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
