@@ -1,0 +1,32 @@
+EN = 0 ->ON
+EN = 1 ->OFF
+
+SPI = 5 bytes(40 bit)-> 32 bit data + 8 bit address
+	byte 0 -> address
+	byte 1-4 -> data
+	MSB first
+	SPI MODE 3
+	
+	address 1-write, 0-read
+	7 6 5 4 3 2 1 0
+	1 
+
+	1. GSTAT - 0x01
+	2. 
+
+
+	every read request will return data of previous request
+	2 spi transaction required to read anything
+
+
+
+1. SPI message sent to TMC5106
+2. SPI message receive from TMC5106
+
+SPI Sent message:(format)
+For a read access the most significant bit of the address byte is 0.
+For a write access the most significant bit of the address byte is 1.
+
+
+
+SPI Receive message
