@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include<stdio.h>
 #include<string.h>
 /* USER CODE END Includes */
 
@@ -31,6 +32,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+//SPI
+#define SPI_CS_ENABLE()		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET)
+#define SPI_CS_DISABLE()	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET)
+
+#define DRV_ENABLE()	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET)
+#define DRV_DISABLE()	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET)
+
+//#define DRV_EN()	HAL_GPIO_Write_Pin(GPIOE, GPIO_PIN_4, GPIO_PIN_SET);
 
 /* USER CODE END PD */
 
@@ -94,36 +103,99 @@ int main(void)
   MX_USART2_UART_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Transmit(&huart2, (uint8_t*)"UART2 Testing Complete\r\nSPI1 Testing..\r\n", 40, HAL_MAX_DELAY);
-  HAL_UART_Transmit(&huart2, (uint8_t*)"   [Loopback Test]\r\n", 20, HAL_MAX_DELAY);
-  uint8_t tx_data[] = {'G','A','N','E','S','H'};
-  //uint8_t rx_data[6] = {};
-  uint8_t rx_spi_data[6] = {};
+  SPI_CS_ENABLE();
+  DRV_ENABLE();
 
+
+  //SPI Transmit Array
+  uint8_t tx_data[] = {0x01,0x00,0x00,0x00,0x00};
+  int i;
+//  for(i = 0; i < 5; i++)
+//  {
+//	  char str[10];
+//	  sprintf(str, "0x%02X ", tx_data[i]);
+//	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+//  }
+//
+//  HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+  //SPI Receive Array
+  uint8_t rx_spi_data[5] = {0x00};
+//  for(i = 0; i < 5; i++)
+//    {
+//  	  char str[10];
+//  	  sprintf(str, "0x%02X ", rx_spi_data[i]);
+//  	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+//    }
+//
+//    HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+
+  //SPI Message Transmit
+  HAL_SPI_Transmit(&hspi1, tx_data, sizeof(tx_data), 500);
+  for(i = 0; i < 5; i++)
+    {
+  	  char str[10];
+  	  sprintf(str, "0x%02X ", tx_data[i]);
+  	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+    }
+
+    HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+  //SPI Message Receive
+  HAL_SPI_Receive(&hspi1, rx_spi_data, 5, 500);
+  for(i = 0; i < 5; i++)
+      {
+    	  char str[10];
+    	  sprintf(str, "0x%02X ", rx_spi_data[i]);
+    	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+      }
+
+      HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+
+  //SPI Message Transmit
+  HAL_SPI_Transmit(&hspi1, tx_data, sizeof(tx_data), 500);
+  for(i = 0; i < 5; i++)
+    {
+  	  char str[10];
+  	  sprintf(str, "0x%02X ", tx_data[i]);
+  	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+    }
+
+    HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+
+  //SPI Message Receive
+  HAL_SPI_Receive(&hspi1, rx_spi_data, 5, 500);
+  for(i = 0; i < 5; i++)
+      {
+    	  char str[10];
+    	  sprintf(str, "0x%02X ", rx_spi_data[i]);
+    	  HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), HAL_MAX_DELAY);
+      }
+
+      HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+
+  //UART Data Sent
+  HAL_UART_Transmit(&huart2, (uint8_t*)"SPI1 to TMC5160 Communication..\r\n", 40, HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t*)"Data Sent\n\r", 13, HAL_MAX_DELAY);
+
+  //UART SPI Message Transmit
+  //HAL_UART_Transmit(&huart2, tx_data, sizeof(tx_data), HAL_MAX_DELAY);
+
+  //UART SPI Message Receive
+  //HAL_UART_Transmit(&huart2, rx_spi_data, sizeof(rx_spi_data), HAL_MAX_DELAY);
+
+
+  SPI_CS_DISABLE();
+  DRV_DISABLE();
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
   while (1)
   {
-      // SPI full-duplex transmit+receive (true loopback test)
-      HAL_SPI_TransmitReceive(&hspi1, tx_data, rx_spi_data, 6, 100);
 
-      // UART: send out what we transmitted on SPI (for logging/debug)
-      HAL_UART_Transmit(&huart2, tx_data, 6, 100);
-      HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, 100);
+    /* USER CODE END WHILE */
 
-      // Compare what SPI sent vs what SPI received back
-      if (memcmp(tx_data, rx_spi_data, 2) == 0) {
-          HAL_UART_Transmit(&huart2, (uint8_t*)"Data matched\n\r", 14, 100);
-      } else {
-          HAL_UART_Transmit(&huart2, (uint8_t*)"Data unmatched\n\r", 16, 100);
-      }
-
-      HAL_Delay(500); // optional, avoid flooding UART
+    /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
 }
@@ -194,10 +266,10 @@ static void MX_SPI1_Init(void)
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
-  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
+  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -252,12 +324,34 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PE5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
