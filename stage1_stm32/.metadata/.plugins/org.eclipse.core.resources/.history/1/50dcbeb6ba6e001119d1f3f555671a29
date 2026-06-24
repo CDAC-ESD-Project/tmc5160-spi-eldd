@@ -1,0 +1,517 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include<stdio.h>
+#include<string.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+#define SPI_CS_ENABLE()		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET)
+#define SPI_CS_DISABLE()	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET)
+
+#define DRV_ENABLE()		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET)
+#define DRV_DISABLE()		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET)
+
+#define REG_GCONF			0x00
+#define REG_GSTAT			0x01
+#define REG_IOIN			0x04
+#define REG_IHOLD_IRUN		0x10
+#define REG_TPOWERDOWN		0x11
+#define REG_RAMPMODE		0x20
+#define REG_XACTUAL			0x21
+#define REG_VSTART			0x23
+#define REG_A1				0x24
+#define REG_V1				0x25
+#define REG_AMAX			0x26
+#define REG_VMAX			0x27
+#define REG_DMAX			0x28
+#define REG_D1				0x2A
+#define REG_VSTOP			0x2B
+#define REG_XTARGET			0x2D
+#define REG_GLOBAL_SCALER	0x0B
+#define REG_CHOPCONF		0x6C
+#define REG_DRV_STATUS		0x6F
+
+// Flip to 1 to run a continuous velocity-mode spin instead of a position move.
+// Useful as a simpler first test: no target/ramp-completion ambiguity, just
+// "is it actually turning continuously, yes or no."
+#define TEST_VELOCITY_MODE	0
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi1;
+
+UART_HandleTypeDef huart2;
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_SPI1_Init(void);
+/* USER CODE BEGIN PFP */
+void	 print_uart(const char *str);
+void	 tmc5160_write_reg(uint8_t addr, uint32_t data);
+uint32_t tmc5160_read_reg(uint8_t addr);
+void	 tmc5160_status_line(const char *label);
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+void print_uart(const char *str)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), HAL_MAX_DELAY);
+}
+
+// Single 40-bit SPI write. addr gets the write bit (0x80) set automatically.
+void tmc5160_write_reg(uint8_t addr, uint32_t data)
+{
+    uint8_t tx[5];
+    uint8_t rx[5];
+
+    tx[0] = addr | 0x80;
+    tx[1] = (data >> 24) & 0xFF;
+    tx[2] = (data >> 16) & 0xFF;
+    tx[3] = (data >> 8)  & 0xFF;
+    tx[4] = data & 0xFF;
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);
+    SPI_CS_DISABLE();
+}
+
+// TMC5160 read protocol requires two transactions: the first transaction's
+// response is stale (it returns whatever the PREVIOUS read request asked
+// for). The second transaction, sent right after, returns the data for
+// THIS address. Both transactions are issued here so callers always get
+// a correct, current value with a single function call.
+uint32_t tmc5160_read_reg(uint8_t addr)
+{
+    uint8_t tx[5] = { addr, 0x00, 0x00, 0x00, 0x00 };
+    uint8_t rx[5];
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);   // throwaway
+    SPI_CS_DISABLE();
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);   // real data
+    SPI_CS_DISABLE();
+
+    return ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) |
+           ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
+}
+
+// Compact, single-line status snapshot — call this WHILE the driver is
+// enabled and the motor is supposed to be moving, not after DRV_DISABLE().
+// Only prints fault detail when a fault bit is actually set, to avoid
+// flooding the UART during normal operation.
+void tmc5160_status_line(const char *label)
+{
+    char buf[160];
+
+    int32_t  xactual   = (int32_t)tmc5160_read_reg(REG_XACTUAL);
+    uint32_t drvstatus = tmc5160_read_reg(REG_DRV_STATUS);
+    uint32_t gstat     = tmc5160_read_reg(REG_GSTAT);
+
+    uint8_t  cs_actual = (drvstatus >> 16) & 0x1F;   // actual current scale in use
+    uint8_t  stst      = (drvstatus >> 31) & 0x1;    // 1 = chip's ramp velocity is zero
+
+    sprintf(buf, "%-10s XACTUAL=%-7ld stst=%d CS_ACTUAL=%2u  ",
+            label, (long)xactual, stst, cs_actual);
+    print_uart(buf);
+
+    // Only print fault/warning detail if something is actually set —
+    // keeps the steady-state output readable.
+    int any_fault = 0;
+    if (drvstatus & (1UL << 27)) { print_uart("OT ");    any_fault = 1; }
+    if (drvstatus & (1UL << 26)) { print_uart("OTPW ");  any_fault = 1; }
+    if (drvstatus & (1UL << 25)) { print_uart("S2GB ");  any_fault = 1; }
+    if (drvstatus & (1UL << 24)) { print_uart("S2GA ");  any_fault = 1; }
+    if (drvstatus & (1UL << 29)) { print_uart("S2VSB "); any_fault = 1; }
+    if (drvstatus & (1UL << 28)) { print_uart("S2VSA "); any_fault = 1; }
+    if (drvstatus & (1UL << 23)) { print_uart("OLB ");   any_fault = 1; }
+    if (drvstatus & (1UL << 22)) { print_uart("OLA ");   any_fault = 1; }
+    if (gstat & 0x2)             { print_uart("DRV_ERR ");        any_fault = 1; }
+    if (gstat & 0x4)             { print_uart("UV_CP ");          any_fault = 1; }
+    if (!any_fault)              { print_uart("(no faults)"); }
+
+    print_uart("\r\n");
+}
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+  MX_SPI1_Init();
+  /* USER CODE BEGIN 2 */
+  SPI_CS_DISABLE();
+  DRV_DISABLE();
+  HAL_Delay(1000);   // let supply rails and charge pump settle before any SPI traffic
+
+  DRV_ENABLE();
+  HAL_Delay(10);
+
+  print_uart("---- TMC5160 bring-up ----\r\n");
+
+  // --- Sanity check: confirm SPI link and identify the chip before touching motion ---
+  // IOIN.VERSION should read 0x30 for genuine TMC5160 silicon. SD_MODE must
+  // read 1 (SPI mode) or every motion register write below is silently ignored.
+  uint32_t ioin = tmc5160_read_reg(REG_IOIN);
+  char buf[120];
+  sprintf(buf, "IOIN=0x%08lX  VERSION=0x%02lX  SD_MODE=%lu  DRV_ENN=%lu\r\n",
+          ioin, (ioin >> 24) & 0xFF, (ioin >> 1) & 0x1, ioin & 0x1);
+  print_uart(buf);
+
+  // Clear any stale GSTAT flags (reset / undervoltage latch) from power-up
+  tmc5160_write_reg(REG_GSTAT, 0x00000007);
+  HAL_Delay(5);
+
+  // --- Driver configuration ---
+  tmc5160_write_reg(REG_GCONF, 0x00000000);          // SpreadCycle (not StealthChop) for bring-up — more predictable
+
+  // CHOPCONF: TOFF=3, HSTRT=5, HEND=2, TBL=2, MRES=4 (16 microsteps), intpol=1.
+  // Deliberately COARSE microstepping for this test — 256 microsteps gives very
+  // low per-step torque and can mask a real stall as "nothing moves." 16
+  // microsteps gives much higher torque per step, making genuine rotation
+  // visually unambiguous. Switch back to fine microstepping once motion is confirmed.
+  tmc5160_write_reg(REG_CHOPCONF, 0x14410153);
+
+  tmc5160_write_reg(REG_GLOBAL_SCALER, 0x000000C8);  // 200/256 current scaling
+
+  // IHOLD=10, IRUN=22, IHOLDDELAY=6 — moderate run current, reduced hold current.
+  // (Comment now matches the actual encoded value — verify against your own
+  // sense resistor / motor rating before relying on this for a real load.)
+  tmc5160_write_reg(REG_IHOLD_IRUN, 0x0006160A);
+  tmc5160_write_reg(REG_TPOWERDOWN, 0x0000000A);
+
+#if TEST_VELOCITY_MODE
+  // --- Simplest possible motion test: continuous spin, no target ambiguity ---
+  tmc5160_write_reg(REG_VSTART, 0x00000000);
+  tmc5160_write_reg(REG_A1,     0x00000064);
+  tmc5160_write_reg(REG_AMAX,   0x00000032);
+  tmc5160_write_reg(REG_VMAX,   0x00001388);
+  tmc5160_write_reg(REG_RAMPMODE, 0x00000001);   // 1 = positive velocity mode
+
+  print_uart("Velocity mode — motor should spin continuously and indefinitely.\r\n");
+
+  while (1)
+  {
+      tmc5160_status_line("VELOCITY");
+      HAL_Delay(200);
+  }
+
+#else
+  // --- Position mode move ---
+  tmc5160_write_reg(REG_RAMPMODE, 0x00000000);   // 0 = position mode
+
+  tmc5160_write_reg(REG_VSTART, 0x00000000);
+  tmc5160_write_reg(REG_A1,     0x00000064);
+  tmc5160_write_reg(REG_V1,     0x00000C80);
+  tmc5160_write_reg(REG_AMAX,   0x00000032);
+  tmc5160_write_reg(REG_VMAX,   0x00001388);
+  tmc5160_write_reg(REG_DMAX,   0x00000064);
+  tmc5160_write_reg(REG_D1,     0x000000C8);
+  tmc5160_write_reg(REG_VSTOP,  0x0000000A);
+
+  tmc5160_write_reg(REG_XACTUAL, 0x00000000);    // define current position as zero — once only
+  HAL_Delay(5);
+  tmc5160_write_reg(REG_XTARGET, 0x0000C800);    // 51200 microsteps target — once only
+
+  print_uart("Position mode — XTARGET=51200. Watch the shaft AND the log together.\r\n");
+
+  // Status is polled HERE, with the driver still enabled, so any real fault
+  // (short, overtemp, undervoltage) shows up while current is actually
+  // flowing — not after the driver has already been disabled.
+  for (int i = 0; i < 40; i++)
+  {
+      char label[16];
+      sprintf(label, "t=%dms", i * 100);
+      tmc5160_status_line(label);
+      HAL_Delay(100);
+  }
+
+  print_uart("---- test window complete — driver left ENABLED, monitoring continues ----\r\n");
+
+  // Driver intentionally NOT disabled here. If the move genuinely stalled,
+  // leaving the driver enabled lets you keep watching/probing coil voltages
+  // without re-triggering the init jerk by power-cycling the output stage.
+  while (1)
+  {
+      tmc5160_status_line("monitor");
+      HAL_Delay(200);
+  }
+#endif
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 50;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
+  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PE5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

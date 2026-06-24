@@ -1,0 +1,15 @@
+2026-06-23 09:37:43,235 [INFO] Activator:176 - 
+
+
+2026-06-23 09:37:43,238 [INFO] Activator:177 - !SESSION log4j initialized
+2026-06-23 09:37:46,508 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2026-06-23 14:29:31,590 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused

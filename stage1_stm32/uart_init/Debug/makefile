@@ -60,8 +60,8 @@ all: main-build
 main-build: uart_init.elf secondary-outputs
 
 # Tool invocations
-uart_init.elf uart_init.map: $(OBJS) $(USER_OBJS) /home/sunbeam/Desktop/uart_init/STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "uart_init.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/sunbeam/Desktop/uart_init/STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="uart_init.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+uart_init.elf uart_init.map: $(OBJS) $(USER_OBJS) /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/uart_init/STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "uart_init.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/uart_init/STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="uart_init.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
