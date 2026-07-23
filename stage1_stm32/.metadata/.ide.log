@@ -1,15 +1,15 @@
-2026-06-23 09:37:43,235 [INFO] Activator:176 - 
+2026-07-21 14:37:21,079 [INFO] Activator:176 - 
 
 
-2026-06-23 09:37:43,238 [INFO] Activator:177 - !SESSION log4j initialized
-2026-06-23 09:37:46,508 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
-2026-06-23 14:29:31,590 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:31,591 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
-2026-06-23 14:29:42,488 [ERROR] AdobePublisher:162 - Exception while opening the connection: java.net.ConnectException: Connection refused
+2026-07-21 14:37:21,082 [INFO] Activator:177 - !SESSION log4j initialized
+2026-07-21 14:37:30,682 [INFO] LogOutputStream:77 - [STDOUT_REDIRECT] 
+2026-07-21 14:50:31,368 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 14:50:31,369 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 14:50:31,369 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 16:25:52,840 [ERROR] ConfigurationRetriever:142 - IOException on connection: Read timed out
+2026-07-21 16:51:44,435 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 16:51:44,436 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 16:51:44,436 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 16:51:44,585 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 16:51:44,586 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com
+2026-07-21 16:51:44,586 [ERROR] ConfigurationRetriever:142 - IOException on connection: sw-center.st.com

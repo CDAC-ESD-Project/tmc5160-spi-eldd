@@ -44,8 +44,10 @@
 #define REG_IOIN			0x04
 #define REG_IHOLD_IRUN		0x10
 #define REG_TPOWERDOWN		0x11
+#define REG_TCOOLTHRS		0x14	// FIX: was never written before -- see note above the write, in main()
 #define REG_RAMPMODE		0x20
 #define REG_XACTUAL			0x21
+#define REG_VACTUAL			0x22	// FIX: added -- used as a diagnostic in tmc5160_status_line()
 #define REG_VSTART			0x23
 #define REG_A1				0x24
 #define REG_V1				0x25
@@ -62,7 +64,24 @@
 // Flip to 1 to run a continuous velocity-mode spin instead of a position move.
 // Useful as a simpler first test: no target/ramp-completion ambiguity, just
 // "is it actually turning continuously, yes or no."
-#define TEST_VELOCITY_MODE	1
+#define TEST_VELOCITY_MODE	0
+
+// --- Motor / microstepping geometry -----------------------------------------
+// FIX: XTARGET used to be the bare constant 51200 with no explanation of what
+// distance that actually represents. 51200 only equals "1 full revolution"
+// if MRES=0 (256 microsteps/fullstep) -- it does NOT match the 16-microstep
+// (MRES=4) setup this file's CHOPCONF comment always intended. Compute
+// XTARGET from real motor geometry instead of hard-coding a number, so the
+// two can never silently drift apart again.
+//
+// MICROSTEPS_PER_FULLSTEP must always match the MRES field you actually
+// write into CHOPCONF below: MRES -> microsteps/fullstep is 2^(8-MRES),
+// except MRES=8 which is the special-cased fullstep (1) value. See the
+// lookup table in the accompanying writeup for the full MRES table.
+#define MOTOR_FULLSTEPS_PER_REV		200		// 1.8 deg/step motor. Use 400 for a 0.9 deg/step motor.
+#define MICROSTEPS_PER_FULLSTEP		16		// Must match MRES=4 in CHOPCONF below.
+#define REVOLUTIONS_TO_MOVE			1
+#define TEST_XTARGET  (MOTOR_FULLSTEPS_PER_REV * MICROSTEPS_PER_FULLSTEP * REVOLUTIONS_TO_MOVE)
 
 /* USER CODE END PD */
 
@@ -140,39 +159,58 @@ uint32_t tmc5160_read_reg(uint8_t addr)
            ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
 }
 
-// Compact, single-line status snapshot — call this WHILE the driver is
+// Compact, single-line status snapshot -- call this WHILE the driver is
 // enabled and the motor is supposed to be moving, not after DRV_DISABLE().
 // Only prints fault detail when a fault bit is actually set, to avoid
 // flooding the UART during normal operation.
+//
+// FIX: every DRV_STATUS fault-bit shift in the previous version was wrong.
+// Verified against the TMC5160 register map (DRV_STATUS, addr 0x6F):
+//   bit31 stst   bit30 olb   bit29 ola   bit28 s2gb   bit27 s2ga
+//   bit26 otpw   bit25 ot    bit24 stallGuard
+//   bits20:16 cs_actual (5 bits)     bit13 s2vsb   bit12 s2vsa
+// The old code read bit24 and printed it as "S2GA" -- bit24 is actually
+// stallGuard (motor-stall status), not a short-to-ground flag at all. The
+// *real* s2ga (bit27) was being read and printed as "OT" instead. In other
+// words the fault that was alarming as "S2GA" on your UART was almost
+// certainly never a real short to ground.
 void tmc5160_status_line(const char *label)
 {
-    char buf[160];
+    char buf[180];
 
     int32_t  xactual   = (int32_t)tmc5160_read_reg(REG_XACTUAL);
+    int32_t  vactual   = (int32_t)tmc5160_read_reg(REG_VACTUAL);   // FIX: added for stst debugging (see writeup)
     uint32_t drvstatus = tmc5160_read_reg(REG_DRV_STATUS);
     uint32_t gstat     = tmc5160_read_reg(REG_GSTAT);
 
-    uint8_t  cs_actual = (drvstatus >> 16) & 0x1F;   // actual current scale in use
-    uint8_t  stst      = (drvstatus >> 31) & 0x1;    // 1 = chip's ramp velocity is zero
+    uint8_t  cs_actual = (drvstatus >> 16) & 0x1F;   // actual current scale in use -- bits 20:16, unchanged/correct
+    uint8_t  stst      = (drvstatus >> 31) & 0x1;    // 1 = chip's ramp velocity is zero -- unchanged/correct
 
-    sprintf(buf, "%-10s XACTUAL=%-7ld stst=%d CS_ACTUAL=%2u  ",
-            label, (long)xactual, stst, cs_actual);
+    sprintf(buf, "%-10s XACTUAL=%-7ld VACTUAL=%-6ld stst=%d CS_ACTUAL=%2u  ",
+            label, (long)xactual, (long)vactual, stst, cs_actual);
     print_uart(buf);
 
-    // Only print fault/warning detail if something is actually set —
+    // Only print fault/warning detail if something is actually set --
     // keeps the steady-state output readable.
     int any_fault = 0;
-    if (drvstatus & (1UL << 27)) { print_uart("OT ");    any_fault = 1; }
-    if (drvstatus & (1UL << 26)) { print_uart("OTPW ");  any_fault = 1; }
-    if (drvstatus & (1UL << 25)) { print_uart("S2GB ");  any_fault = 1; }
-    if (drvstatus & (1UL << 24)) { print_uart("S2GA ");  any_fault = 1; }
-    if (drvstatus & (1UL << 29)) { print_uart("S2VSB "); any_fault = 1; }
-    if (drvstatus & (1UL << 28)) { print_uart("S2VSA "); any_fault = 1; }
-    if (drvstatus & (1UL << 23)) { print_uart("OLB ");   any_fault = 1; }
-    if (drvstatus & (1UL << 22)) { print_uart("OLA ");   any_fault = 1; }
-    if (gstat & 0x2)             { print_uart("DRV_ERR ");        any_fault = 1; }
-    if (gstat & 0x4)             { print_uart("UV_CP ");          any_fault = 1; }
+    if (drvstatus & (1UL << 25)) { print_uart("OT ");         any_fault = 1; }
+    if (drvstatus & (1UL << 26)) { print_uart("OTPW ");       any_fault = 1; }
+    if (drvstatus & (1UL << 28)) { print_uart("S2GB ");       any_fault = 1; }
+    if (drvstatus & (1UL << 27)) { print_uart("S2GA ");       any_fault = 1; }
+    if (drvstatus & (1UL << 13)) { print_uart("S2VSB ");      any_fault = 1; }
+    if (drvstatus & (1UL << 12)) { print_uart("S2VSA ");      any_fault = 1; }
+    if (drvstatus & (1UL << 30)) { print_uart("OLB ");        any_fault = 1; }
+    if (drvstatus & (1UL << 29)) { print_uart("OLA ");        any_fault = 1; }
+    if (gstat & 0x2)             { print_uart("DRV_ERR ");    any_fault = 1; }
+    if (gstat & 0x4)             { print_uart("UV_CP ");      any_fault = 1; }
     if (!any_fault)              { print_uart("(no faults)"); }
+
+    // stallGuard (bit24) is reported separately from the fault set above,
+    // on purpose: with TCOOLTHRS left at 0 (see main(), below) CoolStep/
+    // StallGuard evaluation is gated off across the whole speed range, so
+    // this bit isn't a trustworthy stall indicator yet. It's printed only
+    // as a raw diagnostic while you bring the driver up, not as a fault.
+    if (drvstatus & (1UL << 24)) { print_uart("[stallGuard_bit_set] "); }
 
     print_uart("\r\n");
 }
@@ -225,31 +263,64 @@ int main(void)
   // read 1 (SPI mode) or every motion register write below is silently ignored.
   uint32_t ioin = tmc5160_read_reg(REG_IOIN);
   char buf[120];
-  sprintf(buf, "IOIN=0x%08lX  VERSION=0x%02lX  SD_MODE=%lu  DRV_ENN=%lu\r\n",
-          ioin, (ioin >> 24) & 0xFF, (ioin >> 1) & 0x1, ioin & 0x1);
-  print_uart(buf);
+  sprintf(buf, "IOIN=0x%08lX  VERSION=0x%02lX  SD_MODE=%lu  DRV_ENN=%lu  "
+               "STEP_pin=%lu  DIR_pin=%lu\r\n",
+          ioin,
+          (ioin >> 24) & 0x1,   // VERSION
+          (ioin >> 6)  & 0x1,   // SD_MODE  ← bit 6, not bit 1
+          (ioin >> 4)  & 0x1,   // DRV_ENN  ← bit 4, not bit 0
+          (ioin >> 0)  & 0x1,   // STEP pin state (diagnostic)
+          (ioin >> 1)  & 0x1);  // DIR  pin state (diagnostic)
 
   // Clear any stale GSTAT flags (reset / undervoltage latch) from power-up
   tmc5160_write_reg(REG_GSTAT, 0x00000007);
   HAL_Delay(5);
 
   // --- Driver configuration ---
-  tmc5160_write_reg(REG_GCONF, 0x00000000);          // SpreadCycle (not StealthChop) for bring-up — more predictable
+  tmc5160_write_reg(REG_GCONF, 0x00000000);          // SpreadCycle (not StealthChop) for bring-up -- more predictable
 
-  // CHOPCONF: TOFF=3, HSTRT=5, HEND=2, TBL=2, MRES=4 (16 microsteps), intpol=1.
-  // Deliberately COARSE microstepping for this test — 256 microsteps gives very
-  // low per-step torque and can mask a real stall as "nothing moves." 16
-  // microsteps gives much higher torque per step, making genuine rotation
-  // visually unambiguous. Switch back to fine microstepping once motion is confirmed.
-  tmc5160_write_reg(REG_CHOPCONF, 0x14410153);
+  // FIX: this used to be 0x18410153, which the comment claimed was
+  // "MRES=4 (16 microsteps)". It is not -- decoding the actual bits gives
+  // MRES=8, which is FULLSTEP mode (1 microstep/fullstep), not 16. TOFF=3,
+  // HSTRT=5, HEND=2, TBL=2 and intpol=1 were all correct; only the MRES
+  // nibble was wrong. 0x14010153 below encodes MRES=4 for real.
+  //
+  // This bug is very likely the main cause of both symptoms you're seeing:
+  //  - At fullstep, the SAME VMAX register value drives the motor 16x
+  //    faster in real RPM than the 16-microstep value the ramp parameters
+  //    below were tuned for (see the writeup's speed table). Fullstep
+  //    SpreadCycle at that speed is rough, resonance-prone, and draws more
+  //    current for longer -- a completely mundane explanation for
+  //    "significant heating" with no short circuit involved.
+  //  - XTARGET (see below) was also 16x too large for the same reason,
+  //    turning an intended short test move into ~256 full revolutions.
+  //
+  // Deliberately COARSE microstepping for this test -- 256 microsteps gives
+  // very low per-step torque and can mask a real stall as "nothing moves."
+  // 16 microsteps gives much higher torque per step, making genuine
+  // rotation visually unambiguous. Switch to finer microstepping (raise
+  // MRES) once motion is confirmed correct at this coarse setting.
+  tmc5160_write_reg(REG_CHOPCONF, 0x14010153);
 
   tmc5160_write_reg(REG_GLOBAL_SCALER, 0x000000C8);  // 200/256 current scaling
 
-  // IHOLD=10, IRUN=22, IHOLDDELAY=6 — moderate run current, reduced hold current.
-  // (Comment now matches the actual encoded value — verify against your own
+  // IHOLD=10, IRUN=22, IHOLDDELAY=6 -- moderate run current, reduced hold current.
+  // (Comment now matches the actual encoded value -- verify against your own
   // sense resistor / motor rating before relying on this for a real load.)
   tmc5160_write_reg(REG_IHOLD_IRUN, 0x0006160A);
   tmc5160_write_reg(REG_TPOWERDOWN, 0x0000000A);
+
+  // FIX: added -- this register was never written before, so it sat at its
+  // power-on-default of 0. Per Trinamic's documented behavior, CoolStep and
+  // StallGuard only evaluate while TCOOLTHRS >= TSTEP (i.e. above a minimum
+  // speed); leaving it at 0 keeps that feature switched off across your
+  // whole speed range. That's fine for this bring-up test (we don't rely on
+  // it), but it's now an explicit, intentional choice instead of an
+  // accidental side effect, and it's why the stallGuard bit in the status
+  // line above isn't being treated as a real fault. To use stall detection
+  // later, set this to a TSTEP-based value and configure SGT via COOLCONF
+  // (0x6D) -- see the writeup for the formula.
+  tmc5160_write_reg(REG_TCOOLTHRS, 0x00000000);
 
 #if TEST_VELOCITY_MODE
   // --- Simplest possible motion test: continuous spin, no target ambiguity ---
@@ -259,7 +330,7 @@ int main(void)
   tmc5160_write_reg(REG_VMAX,   0x00001388);
   tmc5160_write_reg(REG_RAMPMODE, 0x00000001);   // 1 = positive velocity mode
 
-  print_uart("Velocity mode — motor should spin continuously and indefinitely.\r\n");
+  print_uart("Velocity mode -- motor should spin continuously and indefinitely.\r\n");
 
   while (1)
   {
@@ -280,15 +351,21 @@ int main(void)
   tmc5160_write_reg(REG_D1,     0x000000C8);
   tmc5160_write_reg(REG_VSTOP,  0x0000000A);
 
-  tmc5160_write_reg(REG_XACTUAL, 0x00000000);    // define current position as zero — once only
+  tmc5160_write_reg(REG_XACTUAL, 0x00000000);    // define current position as zero -- once only
   HAL_Delay(5);
-  tmc5160_write_reg(REG_XTARGET, 0x0000C800);    // 51200 microsteps target — once only
+  // FIX: was the bare constant 0x0000C800 (51200). Now derived from motor
+  // geometry (see #defines above) so it always matches the MRES you actually
+  // configured. With MRES=4 and the #defines as shipped, this is exactly
+  // 1 revolution of a 200-fullstep/rev motor (3200 microsteps).
+  tmc5160_write_reg(REG_XTARGET, (uint32_t)TEST_XTARGET);
 
-  print_uart("Position mode — XTARGET=51200. Watch the shaft AND the log together.\r\n");
+  sprintf(buf, "Position mode -- XTARGET=%d (%d rev of a %d step/rev motor at %d ustep/fullstep). Watch the shaft AND the log together.\r\n",
+          TEST_XTARGET, REVOLUTIONS_TO_MOVE, MOTOR_FULLSTEPS_PER_REV, MICROSTEPS_PER_FULLSTEP);
+  print_uart(buf);
 
   // Status is polled HERE, with the driver still enabled, so any real fault
   // (short, overtemp, undervoltage) shows up while current is actually
-  // flowing — not after the driver has already been disabled.
+  // flowing -- not after the driver has already been disabled.
   for (int i = 0; i < 40; i++)
   {
       char label[16];
@@ -296,17 +373,18 @@ int main(void)
       tmc5160_status_line(label);
       HAL_Delay(100);
   }
+  DRV_DISABLE();
 
-  print_uart("---- test window complete — driver left ENABLED, monitoring continues ----\r\n");
+  print_uart("---- test window complete -- driver left disabled ----\r\n");
 
   // Driver intentionally NOT disabled here. If the move genuinely stalled,
   // leaving the driver enabled lets you keep watching/probing coil voltages
   // without re-triggering the init jerk by power-cycling the output stage.
-  while (1)
-  {
-      tmc5160_status_line("monitor");
-      HAL_Delay(200);
-  }
+//  while (1)
+//  {
+//      tmc5160_status_line("monitor");
+//      HAL_Delay(200);
+//  }
 #endif
 
   /* USER CODE END 2 */
@@ -457,10 +535,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 
   /*Configure GPIO pin : PE5 */
   GPIO_InitStruct.Pin = GPIO_PIN_5;

@@ -209,3 +209,57 @@ Command-line arguments:  -os linux -ws gtk -arch x86_64
 
 !ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-06-23 09:37:47.592
 !MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2026-06-25 03:15:18.775 -----------------------------------------------
+eclipse.buildId=Version 2.1.0
+java.version=21.0.9
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=linux, ARCH=x86_64, WS=gtk, NL=en_US
+Command-line arguments:  -os linux -ws gtk -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-06-25 03:15:23.817
+!MESSAGE Log4j2 initialized with config file /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-06-25 03:15:28.126
+!MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2026-06-25 23:26:16.610 -----------------------------------------------
+eclipse.buildId=Version 2.1.0
+java.version=21.0.9
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=linux, ARCH=x86_64, WS=gtk, NL=en_US
+Command-line arguments:  -os linux -ws gtk -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-06-25 23:26:20.743
+!MESSAGE Log4j2 initialized with config file /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-06-25 23:26:24.677
+!MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2026-06-28 01:19:06.794 -----------------------------------------------
+eclipse.buildId=Version 2.1.0
+java.version=21.0.9
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=linux, ARCH=x86_64, WS=gtk, NL=en_US
+Command-line arguments:  -os linux -ws gtk -arch x86_64
+
+!ENTRY org.eclipse.core.resources 2 10035 2026-06-28 01:19:09.796
+!MESSAGE The workspace exited with unsaved changes in the previous session; refreshing workspace to recover changes.
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-06-28 01:19:11.451
+!MESSAGE Log4j2 initialized with config file /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-06-28 01:19:15.373
+!MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2026-07-21 14:37:07.592 -----------------------------------------------
+eclipse.buildId=Version 2.1.0
+java.version=21.0.9
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=linux, ARCH=x86_64, WS=gtk, NL=en_US
+Command-line arguments:  -os linux -ws gtk -arch x86_64
+
+!ENTRY org.eclipse.core.resources 2 10035 2026-07-21 14:37:19.161
+!MESSAGE The workspace exited with unsaved changes in the previous session; refreshing workspace to recover changes.
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-07-21 14:37:20.794
+!MESSAGE Log4j2 initialized with config file /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-07-21 14:37:31.701
+!MESSAGE Started RMI Server, listening on port 41337
