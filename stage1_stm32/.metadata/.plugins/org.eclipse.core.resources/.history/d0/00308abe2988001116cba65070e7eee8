@@ -110,7 +110,7 @@
 // NOTE: whether HIGH/LOW is actually "forward" on your hardware depends on
 // motor wiring -- if it spins the wrong way, either negate this macro or
 // swap two motor phase wires; there's no way to know that from software.
-#define ROTATION_ANGLE_DEG		-180
+#define ROTATION_ANGLE_DEG		-3600
 
 // STEP pulse timing. STEP_INTERVAL_US is the time between rising edges and
 // therefore sets rotation speed (smaller = faster); STEP_PULSE_HIGH_US is

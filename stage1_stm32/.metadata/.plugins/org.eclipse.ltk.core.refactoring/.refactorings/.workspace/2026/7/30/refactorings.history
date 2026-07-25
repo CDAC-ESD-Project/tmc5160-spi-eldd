@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Rename resource &apos;uart_init&apos; to &apos;moduletesting&apos;" description="Rename resource &apos;uart_init&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="/uart_init" name="moduletesting" stamp="1785010844100" updateReferences="true"/>
+</session>

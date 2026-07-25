@@ -34,34 +34,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := uart_init
+BUILD_ARTIFACT_NAME := moduletesting
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-uart_init.elf \
+moduletesting.elf \
 
 MAP_FILES += \
-uart_init.map \
+moduletesting.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-uart_init.list \
+moduletesting.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: uart_init.elf secondary-outputs
+main-build: moduletesting.elf secondary-outputs
 
 # Tool invocations
-uart_init.elf uart_init.map: $(OBJS) $(USER_OBJS) /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/uart_init/STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "uart_init.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/uart_init/STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="uart_init.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+moduletesting.elf moduletesting.map: $(OBJS) $(USER_OBJS) /home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/uart_init/STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "moduletesting.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/sanyamchoraria/project/tmc5160-spi-eldd/stage1_stm32/uart_init/STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="moduletesting.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -70,14 +70,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-uart_init.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "uart_init.list"
+moduletesting.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "moduletesting.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) default.size.stdout uart_init.elf uart_init.list uart_init.map
+	-$(RM) default.size.stdout moduletesting.elf moduletesting.list moduletesting.map
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
