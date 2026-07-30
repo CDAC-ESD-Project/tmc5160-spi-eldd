@@ -49,6 +49,8 @@
 #define REG_IHOLD_IRUN		0x10
 #define REG_TPOWERDOWN		0x11
 #define REG_TCOOLTHRS		0x14
+#define REG_XACTUAL			0x21
+#define REG_VACTUAL			0x22
 #define REG_GLOBAL_SCALER	0x0B
 #define REG_CHOPCONF		0x6C
 #define REG_DRV_STATUS		0x6F
@@ -137,7 +139,8 @@ uint32_t tmc5160_read_reg(uint8_t addr) {
     HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);   // real data transaction
     SPI_CS_DISABLE();
 
-    return ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) | ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
+    return ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) |
+           ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
 }
 
 // read DRV_STATUS and GSTAT registers, and print according to fault bits set (if any)
@@ -335,6 +338,8 @@ int main(void)
   tmc5160_write_reg(REG_TPOWERDOWN, 0x0000000A);
   tmc5160_write_reg(REG_TCOOLTHRS, 0x00000000);
 
+  // define current position as zero -- once only
+  tmc5160_write_reg(REG_XACTUAL, 0x00000000);
   HAL_Delay(5);
 
   // STEP/DIR pulses for movement, sized from ROTATION_ANGLE_DEG

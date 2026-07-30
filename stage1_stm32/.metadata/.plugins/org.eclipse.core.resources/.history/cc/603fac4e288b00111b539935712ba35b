@@ -39,6 +39,15 @@
 #define DRV_ENABLE()		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET)
 #define DRV_DISABLE()		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET)
 
+#define STEP_GPIO_Port		GPIOB
+#define STEP_Pin			GPIO_PIN_0
+#define DIR_GPIO_Port		GPIOB
+#define DIR_Pin				GPIO_PIN_1
+#define DIAG0_GPIO_Port		GPIOB
+#define DIAG0_Pin			GPIO_PIN_2
+#define DIAG1_GPIO_Port		GPIOB
+#define DIAG1_Pin			GPIO_PIN_3
+
 #define STEP_HIGH()			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET)
 #define STEP_LOW()			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET)
 #define DIR_SET(fwd)		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (fwd) ? GPIO_PIN_SET : GPIO_PIN_RESET)
@@ -49,6 +58,8 @@
 #define REG_IHOLD_IRUN		0x10
 #define REG_TPOWERDOWN		0x11
 #define REG_TCOOLTHRS		0x14
+#define REG_XACTUAL			0x21
+#define REG_VACTUAL			0x22
 #define REG_GLOBAL_SCALER	0x0B
 #define REG_CHOPCONF		0x6C
 #define REG_DRV_STATUS		0x6F
@@ -116,7 +127,7 @@ void tmc5160_write_reg(uint8_t addr, uint32_t data) {
     tx[0] = addr | 0x80;	// addr gets the write bit (0x80)
     tx[1] = (data >> 24) & 0xFF;
     tx[2] = (data >> 16) & 0xFF;
-    tx[3] = (data >> 8) & 0xFF;
+    tx[3] = (data >> 8)  & 0xFF;
     tx[4] = data & 0xFF;
 
     SPI_CS_ENABLE();
@@ -137,7 +148,8 @@ uint32_t tmc5160_read_reg(uint8_t addr) {
     HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);   // real data transaction
     SPI_CS_DISABLE();
 
-    return ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) | ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
+    return ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) |
+           ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
 }
 
 // read DRV_STATUS and GSTAT registers, and print according to fault bits set (if any)
@@ -335,6 +347,8 @@ int main(void)
   tmc5160_write_reg(REG_TPOWERDOWN, 0x0000000A);
   tmc5160_write_reg(REG_TCOOLTHRS, 0x00000000);
 
+  // define current position as zero -- once only
+  tmc5160_write_reg(REG_XACTUAL, 0x00000000);
   HAL_Delay(5);
 
   // STEP/DIR pulses for movement, sized from ROTATION_ANGLE_DEG
