@@ -1,0 +1,629 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include<stdio.h>
+#include<string.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+#define SPI_CS_ENABLE()		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET)
+#define SPI_CS_DISABLE()	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET)
+
+#define DRV_ENABLE()		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_RESET)
+#define DRV_DISABLE()		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET)
+
+#define STEP_GPIO_Port		GPIOB
+#define STEP_Pin			GPIO_PIN_0
+#define DIR_GPIO_Port		GPIOB
+#define DIR_Pin				GPIO_PIN_1
+#define DIAG0_GPIO_Port		GPIOB
+#define DIAG0_Pin			GPIO_PIN_2
+#define DIAG1_GPIO_Port		GPIOB
+#define DIAG1_Pin			GPIO_PIN_3
+
+#define STEP_HIGH()			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET)
+#define STEP_LOW()			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET)
+#define DIR_SET(fwd)		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (fwd) ? GPIO_PIN_SET : GPIO_PIN_RESET)
+
+#define REG_GCONF			0x00
+#define REG_GSTAT			0x01
+#define REG_IOIN			0x04
+#define REG_IHOLD_IRUN		0x10
+#define REG_TPOWERDOWN		0x11
+#define REG_TCOOLTHRS		0x14
+#define REG_XACTUAL			0x21
+#define REG_VACTUAL			0x22
+#define REG_GLOBAL_SCALER	0x0B
+#define REG_CHOPCONF		0x6C
+#define REG_DRV_STATUS		0x6F
+
+#define MOTOR_FULLSTEPS_PER_REV		200		// 1.8 deg/step motor. Use 400 for a 0.9 deg/step motor.
+#define MICROSTEPS_PER_FULLSTEP		16		// Must match MRES=4 in CHOPCONF below.
+
+#define ROTATION_ANGLE_DEG		3600		// required angle to rotate, sign indicates direction
+
+#define STEP_PULSE_HIGH_US		2			// how long STEP is held high per pulse
+#define STEP_INTERVAL_US		50			// time between rising edges, sets speed (smaller -> faster)
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi1;
+
+UART_HandleTypeDef huart2;
+
+/* USER CODE BEGIN PV */
+
+volatile uint8_t diag0_event = 0;
+volatile uint8_t diag1_event = 0;
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_SPI1_Init(void);
+/* USER CODE BEGIN PFP */
+void	 print_uart(const char *str);
+void	 tmc5160_write_reg(uint8_t addr, uint32_t data);
+uint32_t tmc5160_read_reg(uint8_t addr);
+static void tmc5160_report_faults(const char *source);
+
+static void DWT_Init(void);
+static void delay_us(uint32_t us);
+static uint32_t angle_to_microsteps(int32_t angle_deg);
+static void tmc_step_move(uint32_t n_steps, uint8_t dir_forward);
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+// transmit information over UART
+void print_uart(const char *str) {
+    HAL_UART_Transmit(&huart2, (uint8_t *)str, strlen(str), HAL_MAX_DELAY);
+}
+
+// write to TMC5160 registers
+void tmc5160_write_reg(uint8_t addr, uint32_t data) {
+    uint8_t tx[5];
+    uint8_t rx[5];
+
+    tx[0] = addr | 0x80;	// addr gets the write bit (0x80)
+    tx[1] = (data >> 24) & 0xFF;
+    tx[2] = (data >> 16) & 0xFF;
+    tx[3] = (data >> 8)  & 0xFF;
+    tx[4] = data & 0xFF;
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);
+    SPI_CS_DISABLE();
+}
+
+// read from TMC5160 registers
+uint32_t tmc5160_read_reg(uint8_t addr) {
+    uint8_t tx[5] = { addr, 0x00, 0x00, 0x00, 0x00 };
+    uint8_t rx[5];
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);   // throwaway transaction
+    SPI_CS_DISABLE();
+
+    SPI_CS_ENABLE();
+    HAL_SPI_TransmitReceive(&hspi1, tx, rx, 5, HAL_MAX_DELAY);   // real data transaction
+    SPI_CS_DISABLE();
+
+    return ((uint32_t)rx[1] << 24) | ((uint32_t)rx[2] << 16) |
+           ((uint32_t)rx[3] << 8)  |  (uint32_t)rx[4];
+}
+
+// read DRV_STATUS and GSTAT registers, and print according to fault bits set (if any)
+static void tmc5160_report_faults(const char *source) {
+    uint32_t drvstatus = tmc5160_read_reg(REG_DRV_STATUS);
+    uint32_t gstat     = tmc5160_read_reg(REG_GSTAT);
+    char buf[96];
+
+    // source identifies what triggered the read (DIAG0 or DIAG1)
+    sprintf(buf, "[%s] DRV_STATUS=0x%08lX GSTAT=0x%08lX -- ", source, (unsigned long)drvstatus, (unsigned long)gstat);
+    print_uart(buf);
+
+    int any_fault = 0;
+    if (drvstatus & (1UL << 25)) {
+    	print_uart("OT(overtemp shutdown) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 26)) {
+    	print_uart("OTPW(overtemp prewarn) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 28)) {
+    	print_uart("S2GB(short to GND, B) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 27)) {
+    	print_uart("S2GA(short to GND, A) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 13)) {
+    	print_uart("S2VSB(short to supply, B) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 12)) {
+    	print_uart("S2VSA(short to supply, A) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 30)) {
+    	print_uart("OLB(open load, B) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 29)) {
+    	print_uart("OLA(open load, A) ");
+    	any_fault = 1;
+    }
+    if (drvstatus & (1UL << 24)) {
+    	print_uart("STALLGUARD ");
+    	any_fault = 1;
+    }
+    if (gstat & 0x2) {
+    	print_uart("DRV_ERR(latched driver error) ");
+    	any_fault = 1;
+    }
+    if (gstat & 0x4) {
+    	print_uart("UV_CP(charge pump undervoltage) ");
+    	any_fault = 1;
+    }
+    if (!any_fault) {
+    	print_uart("(no fault bits set: spurious or benign edge) ");
+    }
+
+    print_uart("\r\n");
+
+    // clear latched GSTAT flags
+    tmc5160_write_reg(REG_GSTAT, 0x00000007);
+}
+
+// fine, microsecond delay using DWT Cycle Counter
+static void DWT_Init(void) {
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
+static void delay_us(uint32_t us) {
+    uint32_t start = DWT->CYCCNT;
+    uint32_t ticks = us * (SystemCoreClock / 1000000UL);
+    while ((DWT->CYCCNT - start) < ticks) { }
+}
+
+// steps = |angle| / 360 * fullsteps_per_rev * microsteps_per_fullstep,
+// done in integer arithmetic (no float) so the result is deterministic.
+static uint32_t angle_to_microsteps(int32_t angle_deg)
+{
+    int32_t mag = (angle_deg < 0) ? -angle_deg : angle_deg;
+    uint64_t num = (uint64_t)mag * MOTOR_FULLSTEPS_PER_REV * MICROSTEPS_PER_FULLSTEP;
+    return (uint32_t)(num / 360);
+}
+
+// STEP/DIR move
+static void tmc_step_move(uint32_t n_steps, uint8_t dir) {
+    DIR_SET(dir);	// set/reset DIR pin
+    delay_us(10);   // setup margin
+
+    for (uint32_t i = 0; i < n_steps; i++) {	// toggle STEP pin for n steps calculated from angle_to_microsteps()
+        STEP_HIGH();
+        delay_us(STEP_PULSE_HIGH_US);
+        STEP_LOW();
+        delay_us(STEP_INTERVAL_US - STEP_PULSE_HIGH_US);
+    }
+}
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+  MX_SPI1_Init();
+  /* USER CODE BEGIN 2 */
+  DWT_Init();
+
+  SPI_CS_DISABLE();
+  DRV_DISABLE();
+  STEP_LOW();
+  DIR_SET(1);
+  HAL_Delay(1000);   // halt for power to stabilize before any instructions/motion
+
+  DRV_ENABLE();
+  HAL_Delay(10);
+
+  print_uart("---- TMC5160 bring-up (STEP/DIR motion, SPI config-only) ----\r\n");
+
+  // check: confirm SPI link and identify the chip
+  uint32_t ioin = tmc5160_read_reg(REG_IOIN);
+  char buf[120];
+  sprintf(buf, "IOIN=0x%08lX  VERSION=0x%02lX  SD_MODE=%lu  DRV_ENN=%lu  STEP_pin=%lu  DIR_pin=%lu\r\n",
+          (unsigned long)ioin,
+          (unsigned long)((ioin >> 24) & 0xFF),	// VERSION  -> reads 0x30 for genuine TMC5160
+          (unsigned long)((ioin >> 6)  & 0x1),	// SD_MODE  -> reads 1 (hardwired)
+          (unsigned long)((ioin >> 4)  & 0x1),	// DRV_ENN
+          (unsigned long)((ioin >> 0)  & 0x1),	// STEP pin state
+          (unsigned long)((ioin >> 1)  & 0x1)	// DIR pin state
+		  );
+  print_uart(buf);
+
+  // clear stale GSTAT flags from power-up
+  tmc5160_write_reg(REG_GSTAT, 0x00000007);
+  HAL_Delay(5);
+
+  // driver configuration over SPI (current, microstepping, chopper, diagnostics)
+  // DIAG0 is routed to fire on any driver error or overtemp pre-warning
+  // DIAG1 is routed to fire on StallGuard stall, both are set to push-pull/active-HIGH
+  // so they can be wired straight into the MCU's EXTI inputs with no external
+  // pull-up needed.
+
+  tmc5160_write_reg(REG_GCONF, (1UL << 5) | (1UL << 6) | (1UL << 8) | (1UL << 12) | (1UL << 13));
+  //	5 -> DIAG0 pulses on driver error
+  //	6 -> DIAG0 pulses on overtemp prewarning
+  //	8 -> DIAG1 pulses on stall event
+  //	12 -> DIAG0 push-pull, active HIGH, not open-drain
+  //	13 -> DIAG1 push-pull, active HIGH, not open-drain
+
+  // MRES=4 (16 microsteps/fullstep), TOFF=3, HSTRT=5, HEND=2, TBL=2, intpol=1
+  // update MICROSTEPS_PER_FULLSTEP to match
+  tmc5160_write_reg(REG_CHOPCONF, 0x14010153);
+
+  // 200/256 current scaling
+  tmc5160_write_reg(REG_GLOBAL_SCALER, 0x000000C8);
+
+  // IHOLD=10, IRUN=22, IHOLDDELAY=6
+  tmc5160_write_reg(REG_IHOLD_IRUN, 0x0006160A);
+  tmc5160_write_reg(REG_TPOWERDOWN, 0x0000000A);
+  tmc5160_write_reg(REG_TCOOLTHRS, 0x00000000);
+
+  // define current position as zero -- once only
+  tmc5160_write_reg(REG_XACTUAL, 0x00000000);
+  HAL_Delay(5);
+
+  // STEP/DIR pulses for movement, sized from ROTATION_ANGLE_DEG
+  uint32_t n_steps = angle_to_microsteps(ROTATION_ANGLE_DEG);
+  uint8_t  dir = (ROTATION_ANGLE_DEG >= 0) ? 1 : 0;
+
+  sprintf(buf, "Moving %d deg (%s, %lu microsteps) via STEP/DIR...\r\n", ROTATION_ANGLE_DEG, dir ? "forward" : "reverse", (unsigned long)n_steps);
+  print_uart(buf);
+
+  tmc_step_move(n_steps, dir);
+
+  print_uart("---- move complete -- driver left enabled, monitoring DIAG0/DIAG1 ----\r\n");
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1) {
+    // the ISR only sets a flag, all the actual SPI/UART work happens here in normal (non-interrupt) context.
+    if (diag0_event) {
+        diag0_event = 0;
+        tmc5160_report_faults("DIAG0");
+    }
+    if (diag1_event) {
+        diag1_event = 0;
+        tmc5160_report_faults("DIAG1");
+    }
+
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 50;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLQ = 7;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
+  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level (STEP idle low) */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level (DIR default forward) */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : PE5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA4 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : STEP -- fast edges wanted for clean, consistent pulse timing */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DIR */
+  GPIO_InitStruct.Pin = GPIO_PIN_1;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DIAG0 -- interrupt on rising edge (push-pull/active-HIGH
+    per GCONF.diag0_int_pushpull=1 set in main(), so no external pull needed) */
+  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DIAG1 -- interrupt on rising edge (push-pull/active-HIGH
+    per GCONF.diag1_poscomp_pushpull=1 set in main()) */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* EXTI interrupt init for DIAG0 (line 2) and DIAG1 (line 3) */
+  HAL_NVIC_SetPriority(EXTI2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+  HAL_NVIC_SetPriority(EXTI3_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI3_IRQn);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+  /* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+
+// EXTI callback called from inside HAL_GPIO_EXTI_IRQHandler() for whichever line just fired
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == GPIO_PIN_2) {
+        diag0_event = 1;
+    }
+    else if (GPIO_Pin == GPIO_PIN_3) {
+        diag1_event = 1;
+    }
+}
+
+void EXTI2_IRQHandler(void) {
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);
+}
+
+void EXTI3_IRQHandler(void) {
+    HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);
+}
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
