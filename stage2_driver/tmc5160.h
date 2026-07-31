@@ -47,4 +47,3 @@ struct tmc5160_dev {
 /* motion parameters */
 
 /* function prototypes for all three layers */
-
