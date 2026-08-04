@@ -1,10 +1,10 @@
-#include "tmc5160.h"
+#include "tmc5160_motion.h"
 
 /* private declarations */
 static enum hrtimer_restart step_timer_callback(struct hrtimer *timer);
-static void update_position(struct tmc5160_dev *dev);
-static bool update_step_count(struct tmc5160_dev *dev);
-static void update_ramp(struct tmc5160_dev *dev);
+static void tmc5160_update_position(struct tmc5160_dev *dev);
+static bool tmc5160_update_step_count(struct tmc5160_dev *dev);
+static void tmc5160_update_ramp(struct tmc5160_dev *dev);
 
 /* function definitions */
 int tmc5160_motion_init(struct tmc5160_dev *dev)
@@ -13,7 +13,7 @@ int tmc5160_motion_init(struct tmc5160_dev *dev)
 
     spin_lock_init(&dev->motion_lock);
 
-    atomic_set(&dev->position_steps, 0);
+    atomic64_set(&dev->position_steps, 0);
     atomic_set(&dev->in_motion, 0);
 
     dev->total_steps = 0;
@@ -33,7 +33,7 @@ int tmc5160_motion_init(struct tmc5160_dev *dev)
     return 0;
 }
 
-void tmc5160_motion_exit(struct tmc5160_dev *dev)
+void tmc5160_motion_cleanup(struct tmc5160_dev *dev)
 {
     hrtimer_cancel(&dev->step_timer);
 }
@@ -64,7 +64,8 @@ int tmc5160_move(struct tmc5160_dev *dev, u32 steps, int direction)
 
     reinit_completion(&dev->move_done);
 
-    tmc5160_set_dir(dev, direction); // set motor direction first
+    /* Set motor direction first -- Called from TMC5160_hw.c */
+    tmc5160_set_dir(dev, direction);
 
     hrtimer_start(&dev->step_timer, ns_to_ktime(dev->current_interval_ns), HRTIMER_MODE_REL);
 
@@ -76,15 +77,15 @@ static enum hrtimer_restart step_timer_callback(struct hrtimer *timer)
     struct tmc5160_dev *dev;
     dev = container_of(timer, struct tmc5160_dev, step_timer);
 
-    /* Generate one step pulse */
+    /* Generate one step pulse -- Called from TMC5160_hw.c */
     tmc5160_step_pulse(dev);
 
-    update_position(dev);
+    tmc5160_update_position(dev);
 
-    if(update_step_count(dev))
+    if(tmc5160_update_step_count(dev))
         return HRTIMER_NORESTART;
     
-    update_ramp(dev);
+    tmc5160_update_ramp(dev);
 
     hrtimer_forward_now(timer, ns_to_ktime(dev->current_interval_ns));
     
@@ -114,9 +115,9 @@ void tmc5160_stop(struct tmc5160_dev *dev)
 }
 
 
-int tmc5160_get_position(struct tmc5160_dev *dev)
+s64 tmc5160_get_position(struct tmc5160_dev *dev)
 {
-    return atomic_read(&dev->position_steps);
+    return atomic64_read(&dev->position_steps);
 }
 
 int tmc5160_set_speed(struct tmc5160_dev *dev, u32 interval_ns)
@@ -133,7 +134,6 @@ int tmc5160_set_speed(struct tmc5160_dev *dev, u32 interval_ns)
     }
     
     dev->interval_run_ns = interval_ns;
-    dev->interval_start_ns = interval_ns + TMC_START_MARGIN_NS;
 
     if(!atomic_read(&dev->in_motion))
         dev->current_interval_ns = dev->interval_start_ns;
@@ -144,7 +144,7 @@ int tmc5160_set_speed(struct tmc5160_dev *dev, u32 interval_ns)
 }
 
 
-int tmc5160_set_accel(struct tmc5160_dev *dev, u32 ramp_steps)
+int tmc5160_set_accel(struct tmc5160_dev *dev, u32 ramp_steps, u32 start_interval_ns)
 {
     unsigned long flags;
 
@@ -157,22 +157,54 @@ int tmc5160_set_accel(struct tmc5160_dev *dev, u32 ramp_steps)
      /* Protected by Spinlock */
     spin_lock_irqsave(&dev->motion_lock, flags);
 
+    if(start_interval_ns < dev->interval_run_ns)
+    {
+        spin_unlock_irqrestore(&dev->motion_lock, flags);
+        return -EINVAL;
+    }
+
     dev->ramp_steps = ramp_steps;
+    dev->interval_start_ns = start_interval_ns;
+
+    if(!atomic_read(&dev->in_motion))
+        dev->current_interval_ns = dev->interval_start_ns;
 
     spin_unlock_irqrestore(&dev->motion_lock, flags);
 
     return 0;
 }
 
-static void update_position(struct tmc5160_dev *dev)
+
+int tmc5160_is_moving(struct tmc5160_dev *dev)
 {
-    if(dev->direction == TMC_DIR_FORWARD)
-        atomic_inc(&dev->position_steps);
-    else
-        atomic_dec(&dev->position_steps);
+    return atomic_read(&dev->in_motion);
 }
 
-static bool update_step_count(struct tmc5160_dev *dev)
+
+int tmc5160_wait_move(struct tmc5160_dev *dev, unsigned int timeout_ms)
+{
+    unsigned long timeout;
+
+    timeout = wait_for_completion_timeout(&dev->move_done, msecs_to_jiffies(timeout_ms));
+
+    if(timeout == 0)
+    {
+        return -ETIMEDOUT;
+    }
+    return 0;
+}
+
+/*---------------------------Helper Function for Motion Layer-----------------------------*/
+
+static void tmc5160_update_position(struct tmc5160_dev *dev)
+{
+    if(dev->direction == TMC_DIR_FORWARD)
+        atomic64_inc(&dev->position_steps);
+    else
+        atomic64_dec(&dev->position_steps);
+}
+
+static bool tmc5160_update_step_count(struct tmc5160_dev *dev)
 {
     bool finished = false;
 
@@ -195,7 +227,7 @@ static bool update_step_count(struct tmc5160_dev *dev)
     return false;
 }
 
-static void update_ramp(struct tmc5160_dev *dev)
+static void tmc5160_update_ramp(struct tmc5160_dev *dev)
 {
     u32 completed_steps;
     u32 effective_ramp;
