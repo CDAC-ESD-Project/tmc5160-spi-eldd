@@ -43,7 +43,7 @@ struct tmc5160_dev {
     struct completion move_done;
 
     /* Motion state */
-    atomic_t position_steps; //software position counter(uSteps)
+    atomic64_t position_steps; //software position counter(uSteps)
     atomic_t in_motion;
     u32 total_steps;
     u32 steps_remaining;
@@ -77,6 +77,8 @@ int tmc5160_motion_init(struct tmc5160_dev *dev);
 void tmc5160_motion_exit(struct tmc5160_dev *dev);
 int tmc5160_move(struct tmc5160_dev *dev, u32 steps, int direction);
 void tmc5160_stop(struct tmc5160_dev *dev);
-int tmc5160_get_position(struct tmc5160_dev *dev);
+s64 tmc5160_get_position(struct tmc5160_dev *dev);
 int tmc5160_set_speed(struct tmc5160_dev *dev, u32 interval_ns);
-int tmc5160_set_accel(struct tmc5160_dev *dev, u32 ramp_steps);
+int tmc5160_set_accel(struct tmc5160_dev *dev, u32 ramp_steps, u32 start_interval_ns);
+int tmc5160_is_moving(struct tmc5160_dev *dev);
+int tmc5160_wait_move(struct tmc5160_dev *dev, unsigned int timeout_ms);
