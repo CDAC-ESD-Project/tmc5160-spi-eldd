@@ -1,0 +1,92 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "ti,beaglebone-black";
+
+	/* Pinmux configuration */
+	fragment@0 {
+		target = <&am33xx_pinmux>;
+		__overlay__ {
+
+			/* SPI0 pins: SCLK(P9.22), D0/MISO(P9.21), D1/MOSI(P9.18), CS0(P9.17) */
+			tmc5160_spi0_pins: tmc5160_spi0_pins {
+				pinctrl-single,pins = <
+					0x150 0x30	/* P9.22 */
+					0x154 0x30	/* P9.21 */
+					0x158 0x10	/* P9.18 */
+					0x15c 0x30	/* P9.17 */
+				>;
+			};
+
+			/* STEP / DIR / ENABLE outputs (tmc5160_hw.c) */
+			tmc5160_ctrl_pins: tmc5160_ctrl_pins {
+				pinctrl-single,pins = <
+					0x078 0x0f	/* P9.12 */
+					0x048 0x0f	/* P9.14 */
+					0x04c 0x0f	/* P9.16 */
+				>;
+			};
+
+			/* DIAG0 / DIAG1 inputs (tmc5160_hw.c, IRQ sources) */
+			tmc5160_diag_pins: tmc5160_diag_pins {
+				pinctrl-single,pins = <
+					0x044 0x2f	/* P9.23 */
+					0x184 0x2f	/* P9.24 */
+				>;
+			};
+
+			/* Home / limit switch input (independent homesw driver) */
+			homesw_pins: homesw_pins {
+				pinctrl-single,pins = <0x1a4 0x37	/* P9.27 */ >;
+			};
+		};
+	};
+
+	/* Enable SPI0 bus */
+	fragment@1 {
+		target = <&spi0>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+			pinctrl-names = "default";
+			pinctrl-0 = <&tmc5160_spi0_pins>;
+
+			/* TMC5160 SPI client node */
+			tmc5160: tmc5160@0 {
+				compatible = "cdac,tmc5160";
+				reg = <0>;			/* CS0, spi0.0 */
+				spi-max-frequency = <1000000>;	/* 1 MHz */
+				spi-cpol;			/* TMC5160 SPI mode 3: CPOL=1 */
+				spi-cpha;			/* CPHA=1 */
+
+				pinctrl-names = "default";
+				pinctrl-0 = <&tmc5160_ctrl_pins &tmc5160_diag_pins>;
+
+				step-gpios    = <&gpio1 28 0>;	/* P9.12 */
+				dir-gpios     = <&gpio1 18 0>;	/* P9.14 */
+				enable-gpios  = <&gpio1 19 1>;	/* P9.16 */
+				diag0-gpios   = <&gpio1 17 0>;	/* P9.23 */
+				diag1-gpios   = <&gpio0 15 0>;	/* P9.24 */
+
+				status = "okay";
+			};
+		};
+	};
+
+	/* Home / limit switch platform device (homesw driver) */
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			homesw_device: homesw_device {
+				compatible = "cdac,homesw";
+				pinctrl-names = "default";
+				pinctrl-0 = <&homesw_pins>;
+
+				homesw-gpios = <&gpio3 19 1>;	/* P9.27 */
+				status = "okay";
+			};
+		};
+	};
+};
