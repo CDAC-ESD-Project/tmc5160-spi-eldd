@@ -1,19 +1,32 @@
 #ifndef TMC5160_H
 #define TMC5160_H
 
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/types.h>
+#include <linux/errno.h>
+#include <linux/slab.h>
+#include <linux/of.h>
 #include <linux/spi/spi.h>
-#include <linux/gpio/consumer.h>
-#include <linux/interrupt.h>
+#include <linux/device.h>
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/uaccess.h>
+#include <linux/ioctl.h>
+#include <linux/poll.h>
+#include <linux/wait.h>
+#include <linux/mutex.h>
+#include <linux/atomic.h>
 #include <linux/delay.h>
+#include <linux/interrupt.h>
 #include <linux/workqueue.h>
 #include <linux/log2.h>
-#include <linux/atomic.h>
-#include <linux/cdev.h>
+#include <linux/minmax.h>
 #include <linux/hrtimer.h>
 #include <linux/completion.h>
-#include <linux/types.h>
 #include <linux/spinlock.h>
-
+#include <linux/gpio/consumer.h>
+#include <linux/ktime.h>
 
 /* Motion timing constants */
 #define TMC_DEFAULT_START_NS      1200000U
@@ -60,45 +73,55 @@ struct tmc5160_dev {
     struct gpio_desc    *enable_gpio;
     struct gpio_desc    *diag0_gpio;
     int                  diag0_irq;
-	struct gpio_desc	*diag1_gpio;
-  int					 diag1_irq;
+	  struct gpio_desc	  *diag1_gpio;
+    int					         diag1_irq;
     struct work_struct   diag0_work;
-	struct work_struct   diag1_work;
-	atomic_t             stall_pending;
-	// for tmc5160_motion.c
+	  struct work_struct   diag1_work;
+	  atomic_t             stall_pending;
+	  // for tmc5160_motion.c
     struct hrtimer       step_timer;
     struct completion    move_done;
     atomic64_t             position_steps;
     atomic_t             in_motion;
+    u32                  total_steps;
     u32                  steps_remaining;
     int                  direction;
     ktime_t              interval_run;
     ktime_t              interval_start;
     u32                  ramp_steps;
     u32                  current_interval_ns;
-  spinlock_t motion_lock;
+    spinlock_t motion_lock;
     // for tmc5160_cdev.c
     struct cdev          cdev;
     struct device       *device;
     struct mutex         lock;
     atomic_t             open_count;
     u32                  fault_flags;
+    wait_queue_head_t    poll_wait_queue;
+    s32                  limit_min_mdeg;
+    s32                  limit_max_mdeg;
+    bool                 limits_set;
+    dev_t                devt;
 };
 
-    u32 total_steps;
-    u32 steps_remaining;
-    int direction;
+/* IOCTL numbers */
+#define TMC_IOC_MAGIC        'T'
 
-    u32 interval_start_ns;
-    u32 interval_run_ns;
-    u32 current_interval_ns;
+#define TMC_SET_VMAX         _IOW(TMC_IOC_MAGIC, 1, u32)
+#define TMC_SET_AMAX         _IOW(TMC_IOC_MAGIC, 2, struct tmc5160_accel_cmd)
+#define TMC_SET_IRUN         _IOW(TMC_IOC_MAGIC, 3, u8)
+#define TMC_SET_IHOLD        _IOW(TMC_IOC_MAGIC, 4, u8)
+#define TMC_SET_MICROSTEP    _IOW(TMC_IOC_MAGIC, 5, u32)
+#define TMC_GET_STATUS       _IOR(TMC_IOC_MAGIC, 6, struct tmc5160_status)
+#define TMC_STOP             _IO(TMC_IOC_MAGIC, 7)
+#define TMC_ENABLE           _IO(TMC_IOC_MAGIC, 8)
+#define TMC_DISABLE          _IO(TMC_IOC_MAGIC, 9)
+#define TMC_SET_HOME         _IO(TMC_IOC_MAGIC,10)
+#define TMC_SET_SOFT_LIMITS  _IOW(TMC_IOC_MAGIC,11, struct tmc5160_limits)
 
-    u32 ramp_steps;
-    u32 active_ramp_steps;
-
-    /* -------------------- cdev layer -------------------- */
-    wait_queue_head_t poll_wait_queue;
-};
+/* cdev exports */
+int tmc5160_cdev_init(struct tmc5160_dev *dev, struct class *tmc5160_class);
+void tmc5160_cdev_cleanup(struct tmc5160_dev *dev);
 
 /* motion layer exports */
 int tmc5160_motion_init(struct tmc5160_dev *dev);
