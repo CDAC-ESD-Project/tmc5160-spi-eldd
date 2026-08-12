@@ -1,7 +1,7 @@
 obj-m += tmc5160.o
-tmc5160-objs := tmc5160_motion.o
+tmc5160-objs := tmc5160_hw.o tmc5160_motion.o
 
-KDIR := /home/sunbeam/BBB/linux/
+KDIR := /home/sunbeam/bbb/linux/
 PWD  := $(shell pwd)
 
 modules:
