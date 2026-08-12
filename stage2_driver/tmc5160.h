@@ -119,6 +119,9 @@ struct tmc5160_dev {
 #define TMC_SET_HOME         _IO(TMC_IOC_MAGIC,10)
 #define TMC_SET_SOFT_LIMITS  _IOW(TMC_IOC_MAGIC,11, struct tmc5160_limits)
 
+/*main layer*/
+char *tmc5160_devnode(struct device *dev, umode_t *mode);
+
 /* cdev exports */
 int tmc5160_cdev_init(struct tmc5160_dev *dev, struct class *tmc5160_class);
 void tmc5160_cdev_cleanup(struct tmc5160_dev *dev);
