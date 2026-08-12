@@ -5,10 +5,9 @@
  */
 
 
-#include "tmc5160.h"
+#include "tmc5160_motion.h"
 
 /* Private declarations */
-
 static enum hrtimer_restart step_timer_callback(struct hrtimer *timer);
 
 /* Helper Function for HRTIMER_Callback*/
@@ -17,7 +16,6 @@ static bool tmc5160_update_step_count(struct tmc5160_dev *dev);
 static void tmc5160_update_ramp(struct tmc5160_dev *dev);
 
 /* Initialization / cleanup */
-
 int tmc5160_motion_init(struct tmc5160_dev *dev)
 {
     init_completion(&dev->move_done);
@@ -51,7 +49,6 @@ void tmc5160_motion_cleanup(struct tmc5160_dev *dev)
 }
 
 /* Public motion API */
-
 int tmc5160_move(struct tmc5160_dev *dev, u32 steps, int direction)
 {
     unsigned long flags;
@@ -106,7 +103,7 @@ void tmc5160_stop(struct tmc5160_dev *dev)
 
     spin_unlock_irqrestore(&dev->motion_lock, flags);
 
-    complete(&dev->move_done);
+    complete_all(&dev->move_done);
 
     wake_up_interruptible(&dev->poll_wait_queue);
 }
@@ -181,9 +178,7 @@ int tmc5160_wait_move(struct tmc5160_dev *dev, unsigned int timeout_ms)
 }
 
 /* Timer callback */
-
-static enum hrtimer_restart
-step_timer_callback(struct hrtimer *timer)
+static enum hrtimer_restart step_timer_callback(struct hrtimer *timer)
 {
     struct tmc5160_dev *dev =
         container_of(timer, struct tmc5160_dev, step_timer);
@@ -203,7 +198,6 @@ step_timer_callback(struct hrtimer *timer)
 }
 
 /* Internal helpers */
-
 static void tmc5160_update_position(struct tmc5160_dev *dev)
 {
     if (dev->direction == TMC_DIR_FORWARD)
@@ -227,6 +221,7 @@ static bool tmc5160_update_step_count(struct tmc5160_dev *dev)
     spin_unlock(&dev->motion_lock);
 
     if (finished) {
+        pr_info("tmc5160: MOTION FINISHED, steps_remaining=%u\n", dev->steps_remaining);
         atomic_set(&dev->in_motion, 0);
 
         complete(&dev->move_done);
