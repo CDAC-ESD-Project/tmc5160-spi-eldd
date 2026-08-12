@@ -1,4 +1,4 @@
-#include "tmc5160_userspace.h"
+#include "userspace.h"
 
 #define DEVICE "/dev/tmc5160-0"
 #define HOMESW_DEVICE "/dev/homesw"
