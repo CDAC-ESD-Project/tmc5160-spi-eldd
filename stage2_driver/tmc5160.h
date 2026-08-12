@@ -1,50 +1,96 @@
+/*
+ * tmc5160.h
+ *
+ * Unified shared header for the TMC5160 Linux SPI stepper motor driver.
+ * This file is the single contract between:
+ *   - tmc5160_hw.c
+ *   - tmc5160_motion.c
+ *   - tmc5160_cdev.c
+ *   - tmc5160_main.c
+ */
 
-/* register addresses */
-#define REG_GCONF			0x00
-#define REG_GSTAT			0x01
-#define REG_IOIN			0x04
-#define REG_IHOLD_IRUN		0x10
-#define REG_TPOWERDOWN		0x11
-#define REG_TCOOLTHRS		0x14
-#define REG_GLOBAL_SCALER	0x0B
-#define REG_CHOPCONF		0x6C
-#define REG_DRV_STATUS		0x6F
 
-/* shared constants */
-#define MICROSTEPS			16
+#ifndef TMC5160_H
+#define TMC5160_H
+
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/types.h>
+#include <linux/errno.h>
+
+#include <linux/slab.h>
+#include <linux/of.h>
+#include <linux/spi/spi.h>
+#include <linux/device.h>
+
+#include <linux/fs.h>
+#include <linux/cdev.h>
+#include <linux/uaccess.h>
+#include <linux/ioctl.h>
+
+#include <linux/poll.h>
+#include <linux/wait.h>
+#include <linux/mutex.h>
+#include <linux/atomic.h>
+
+#include "tmc5160.h"
+
+
+/* Device structure*/
 
 struct tmc5160_dev {
-    // for tmc5160_hw.c
-    struct spi_device   *spi;
-    struct gpio_desc    *step_gpio;
-    struct gpio_desc    *dir_gpio;
-    struct gpio_desc    *enable_gpio;
-    struct gpio_desc    *diag0_gpio;
-    int                  diag0_irq;
-	struct gpio_desc	*diag1_gpio;
-	int					 diag1_irq;
-    // for tmc5160_motion.c
-    struct hrtimer       step_timer;
-    struct completion    move_done;
-    atomic_t             position_steps;
-    atomic_t             in_motion;
-    u32                  steps_remaining;
-    int                  direction;
-    ktime_t              interval_run;
-    ktime_t              interval_start;
-    u32                  ramp_steps;
-    u32                  current_interval_ns;
-    // for tmc5160_cdev.c
-    struct cdev          cdev;
-    struct device       *device;
-    struct mutex         lock;
-    atomic_t             open_count;
-    u8                   fault_flags;
+
+    /* -------------------- main layer -------------------- */
+
+    struct spi_device *spi;
+
+    /* -------------------- cdev layer -------------------- */
+
+    struct cdev cdev;
+    struct device *device;
+
+    struct mutex lock;
+
+    atomic_t open_count;
+
+    u32 fault_flags;
+
+    wait_queue_head_t poll_wait_queue;
+
+    s32 limit_min_mdeg;
+    s32 limit_max_mdeg;
+    bool limits_set;
+
+    dev_t devt;
 };
 
-/* ioctl numbers */
 
-/* motion parameters */
 
-/* function prototypes for all three layers */
+/* IOCTL numbers*/
 
+#define TMC_IOC_MAGIC        'T'
+
+#define TMC_SET_VMAX         _IOW(TMC_IOC_MAGIC, 1, u32)
+#define TMC_SET_AMAX         _IOW(TMC_IOC_MAGIC, 2, struct tmc5160_accel_cmd)
+#define TMC_SET_IRUN         _IOW(TMC_IOC_MAGIC, 3, u8)
+#define TMC_SET_IHOLD        _IOW(TMC_IOC_MAGIC, 4, u8)
+#define TMC_SET_MICROSTEP    _IOW(TMC_IOC_MAGIC, 5, u32)
+#define TMC_GET_STATUS       _IOR(TMC_IOC_MAGIC, 6, struct tmc5160_status)
+#define TMC_STOP             _IO(TMC_IOC_MAGIC, 7)
+#define TMC_ENABLE           _IO(TMC_IOC_MAGIC, 8)
+#define TMC_DISABLE          _IO(TMC_IOC_MAGIC, 9)
+#define TMC_SET_HOME         _IO(TMC_IOC_MAGIC,10)
+#define TMC_SET_SOFT_LIMITS  _IOW(TMC_IOC_MAGIC,11, struct tmc5160_limits)
+
+
+
+/* ------------------------------------------------------------------ */
+/* Character device layer exports                                     */
+/* ------------------------------------------------------------------ */
+
+int tmc5160_cdev_init(struct tmc5160_dev *dev,
+                      struct class *tmc5160_class);
+
+void tmc5160_cdev_cleanup(struct tmc5160_dev *dev);
+
+#endif /* TMC5160_H */
