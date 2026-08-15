@@ -53,7 +53,7 @@ The two drivers have no kernel-level link — coordination happens only in `user
 | Actuator body | 3D-printed ABS, 6 parts, designed in Fusion 360 |
 | Power supply | 24 V, 108 W DC |
 
-![Hardware setup](hardware_setup.png)
+![Hardware setup](stage3_application/hardware_setup.png)
 
 ## Tech Stack
 
