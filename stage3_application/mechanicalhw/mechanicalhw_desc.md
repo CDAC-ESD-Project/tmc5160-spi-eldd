@@ -1,7 +1,7 @@
 ## Linear Actuator Hardware Description
 > Final addition to the project: a screw based linear actuator hardware
 
-A linear actuator is designed using AutoDesk Fusion, and 3D-printed in ABS to bring life to the project.
+A linear actuator is designed using AutoDesk Fusion, and 3D-printed in ABS to bring life to the project. This is just for the puirpose of what hardware went into the physical actuator, since the design and render doesn't contain any other part except for what was 3D-printed.
 
 ### List of Parts:
 | Name | Description |
